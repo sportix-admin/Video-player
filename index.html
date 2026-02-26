@@ -3,21 +3,24 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>S-PTV Direct</title>
+    <title>S-PTV Direct with Debugger</title>
     <!-- Shaka Player Version 4.7.11 (Stable) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.ui.min.js"></script>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     
     <style>
+        /* Body একটু মডিফাই করা হয়েছে প্লেয়ার উপরে তোলার জন্য এবং নিচে ডিবাগ বক্স রাখার জন্য */
         body { 
             background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; 
-            margin: 0; padding: 0; width: 100vw; height: 100vh; 
-            overflow: hidden; display: flex; align-items: center; justify-content: center;
+            margin: 0; padding: 20px 10px; width: 100vw; height: 100vh; 
+            box-sizing: border-box; overflow-y: auto; overflow-x: hidden;
+            display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 20px;
         }
 
         .video-container { 
             width: 100%; max-width: 1000px; aspect-ratio: 16/9; 
             background: #000; position: relative; box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            flex-shrink: 0;
         }
         
         video { width: 100%; height: 100%; object-fit: contain; }
@@ -71,6 +74,17 @@
         .kbps { font-size: 11px; color: #777; }
         
         #error-msg { position: absolute; top: 40%; width: 100%; text-align: center; color: #ff4444; font-size: 16px; display: none; z-index: 5; text-shadow: 0 0 5px black; }
+
+        /* ================= ADDED: DEBUGGING BOX CSS ================= */
+        .debug-box {
+            width: 100%; max-width: 1000px; height: 300px; 
+            background: #0d0d0d; border: 1px solid #333; border-radius: 8px; 
+            padding: 15px; box-sizing: border-box; overflow-y: auto; 
+            font-family: 'Courier New', Courier, monospace; font-size: 12px; color: #00ff00;
+            box-shadow: inset 0 0 10px rgba(0,0,0,0.8); text-align: left;
+        }
+        .debug-box pre { margin: 0; white-space: pre-wrap; word-wrap: break-word; }
+        .debug-title { color: #fff; font-weight: bold; font-size: 14px; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 5px; }
     </style>
 </head>
 <body>
@@ -107,6 +121,12 @@
         </div>
     </div>
 
+    <!-- ================= ADDED: DEBUGGING BOX HTML ================= -->
+    <div class="debug-box" id="debug-box">
+        <div class="debug-title">⚙️ SYSTEM DEBUGGING CONSOLE</div>
+        <pre id="debug-log">Initialize System...\n</pre>
+    </div>
+
     <script>
         // ==========================================
         const CF_WORKER = ''; 
@@ -118,12 +138,40 @@
         const errorMsg = document.getElementById('error-msg');
         let hideTimeout;
 
+        // ================= ADDED: DEBUGGING FUNCTION =================
+        function printDebug(title, data) {
+            const logElement = document.getElementById('debug-log');
+            const debugBox = document.getElementById('debug-box');
+            let timeInfo = new Date().toLocaleTimeString();
+            let content = `\n[${timeInfo}] --- ${title} ---\n`;
+            
+            if (typeof data === 'object') {
+                content += JSON.stringify(data, null, 2);
+            } else {
+                content += data;
+            }
+            logElement.innerHTML += content + '\n';
+            debugBox.scrollTop = debugBox.scrollHeight; // Auto-scroll to bottom
+        }
+        // ==============================================================
+
         async function init() {
+            printDebug('Init', 'Shaka Player Polyfills installing...');
             shaka.polyfill.installAll();
+            
             if (shaka.Player.isBrowserSupported()) {
+                printDebug('Status', 'Browser Supported by Shaka Player.');
                 player = new shaka.Player(video);
-                player.addEventListener('error', console.error);
-                player.addEventListener('buffering', (e) => spinner.style.display = e.buffering ? 'block' : 'none');
+                
+                player.addEventListener('error', (e) => {
+                    console.error(e);
+                    printDebug('PLAYER ERROR', e.detail);
+                });
+                
+                player.addEventListener('buffering', (e) => {
+                    spinner.style.display = e.buffering ? 'block' : 'none';
+                    if(e.buffering) printDebug('Network', 'Buffering started...');
+                });
                 
                 player.getNetworkingEngine().registerRequestFilter(function(type, request) {
                     if (CF_WORKER && CF_WORKER.startsWith('http')) {
@@ -131,12 +179,11 @@
                     }
                 });
 
-                // Force Landscape on Fullscreen (Fix for Chrome)
                 document.addEventListener("fullscreenchange", function() {
                     if (document.fullscreenElement) {
                         if (screen.orientation && screen.orientation.lock) {
                             screen.orientation.lock("landscape").catch(function(error) {
-                                // console.log("Rotation locked by browser policy");
+                                printDebug('Orientation Error', error.message);
                             });
                         }
                     }
@@ -147,29 +194,34 @@
                 const k1 = urlParams.get('k1');
                 const k2 = urlParams.get('k2');
 
+                printDebug('URL Parameters Extracted', { Play_URL: directLink, Key_ID: k1, Key: k2 });
+
                 if (directLink) {
                     let drmConfig = {};
                     if (k1 && k2) {
                         drmConfig = { clearKeys: { [k1]: k2 } };
+                        printDebug('DRM Setup', 'ClearKey DRM Configured.');
                     }
                     loadPlayer(directLink, drmConfig);
                 } else {
                     showError("Error: Use ?play=URL");
+                    printDebug('Error', 'No play URL found in parameters.');
                 }
 
             } else {
                 showError("Browser Not Supported");
+                printDebug('Error', 'Browser NOT Supported.');
             }
         }
 
         async function loadPlayer(url, drmConfig) {
             errorMsg.style.display = 'none';
+            printDebug('Loading Video', url);
             
-            // CONFIGURATION: 5s Buffer (Stable) + Black Screen Fix
             const config = {
                 streaming: { 
-                    bufferingGoal: 5,           // 5s Buffer to prevent "Chirik Chirik"
-                    rebufferingGoal: 2,         // Stable rebuffering
+                    bufferingGoal: 5,           
+                    rebufferingGoal: 2,         
                     bufferBehind: 10,
                     lowLatencyMode: true,
                     retryParameters: {
@@ -180,8 +232,8 @@
                     },
                     jumpLargeGaps: true,
                     inaccurateManifestTolerance: 0,
-                    stallEnabled: true,         // Helps detect black screen stalls
-                    ignoreTextStreamFailures: true // Prevents subtitle errors
+                    stallEnabled: true,         
+                    ignoreTextStreamFailures: true 
                 },
                 manifest: {
                     dash: {
@@ -194,36 +246,47 @@
                 },
                 abr: { 
                     enabled: true, 
-                    switchInterval: 1,           // Small delay to prevent switching crash
+                    switchInterval: 1,           
                     defaultBandwidthEstimate: 500000 
                 },
                 drm: drmConfig
             };
             
             player.configure(config);
+            
+            // PRINTING FULL ACTUAL APPLIED CONFIGURATION LINE BY LINE
+            printDebug('FULL SHAKA CONFIGURATION APPLIED', player.getConfiguration());
+
             try {
                 await player.load(url);
+                printDebug('Success', 'Video loaded successfully into player!');
                 
-                // Aggressive Autoplay with Sound
                 var playPromise = video.play();
                 if (playPromise !== undefined) {
                     playPromise.then(_ => {
-                        // Play successful with sound
+                        printDebug('Playback', 'Autoplay started with sound.');
                     }).catch(error => {
-                        // If blocked, try mute play
                         video.muted = true;
                         video.play();
                         updIcon('pause');
+                        printDebug('Playback', 'Autoplay blocked. Muted and started play.');
                     });
                 }
 
-                if (player.isLive()) video.currentTime = player.seekRange().end - 1;
+                if (player.isLive()) {
+                    video.currentTime = player.seekRange().end - 1;
+                    printDebug('Live Stream', 'Detected LIVE stream. Synced to edge.');
+                } else {
+                    printDebug('VOD Stream', 'Detected VOD (Video on Demand).');
+                }
+                
                 startTimer();
                 updateMenus();
                 showControls();
             } catch (e) { 
                 console.error(e);
                 showError("Stream Offline"); 
+                printDebug('Load Error', 'Failed to load stream (Offline or CORS).');
             }
         }
 
@@ -241,6 +304,9 @@
             q.innerHTML = `<div style="padding:12px;font-weight:bold;border-bottom:1px solid #333;display:flex;justify-content:space-between">Quality <span onclick="closeAllMenus()" style="cursor:pointer">×</span></div><div class="popup-item" onclick="setQ('auto')">Auto <span class="kbps">Rec.</span></div>`;
             const tracks = player.getVariantTracks();
             const seen = new Set();
+            
+            printDebug('Video Tracks Extracted', tracks.length + ' tracks found.');
+
             tracks.sort((a,b) => b.height - a.height).forEach(t => {
                 if(t.height && !seen.has(t.height)) {
                     seen.add(t.height);
@@ -253,7 +319,10 @@
             
             const langName = new Intl.DisplayNames(['en'], { type: 'language' });
 
-            player.getAudioLanguages().forEach(l => {
+            const audioLangs = player.getAudioLanguages();
+            printDebug('Audio Languages Extracted', audioLangs);
+
+            audioLangs.forEach(l => {
                 let label;
                 try {
                     label = langName.of(l);
@@ -264,8 +333,16 @@
             });
         }
 
-        function setQ(h) { h==='auto'?player.configure({abr:{enabled:true}}):(player.configure({abr:{enabled:false}}),player.selectVariantTrack(player.getVariantTracks().find(x=>x.height==h),true)); closeAllMenus(); }
-        function setA(l) { player.selectAudioLanguage(l); closeAllMenus(); }
+        function setQ(h) { 
+            printDebug('User Action', 'Quality set to: ' + h);
+            h==='auto'?player.configure({abr:{enabled:true}}):(player.configure({abr:{enabled:false}}),player.selectVariantTrack(player.getVariantTracks().find(x=>x.height==h),true)); 
+            closeAllMenus(); 
+        }
+        function setA(l) { 
+            printDebug('User Action', 'Audio Language set to: ' + l);
+            player.selectAudioLanguage(l); 
+            closeAllMenus(); 
+        }
 
         function startTimer() {
             video.ontimeupdate = () => {
@@ -280,15 +357,38 @@
             };
         }
         function formatTime(s) { const m = Math.floor(s / 60), sec = Math.floor(s % 60); return `${m}:${sec < 10 ? '0' : ''}${sec}`; }
-        function skip(v) { video.currentTime += v; showControls(); }
-        function goLive() { if(player.isLive()) video.currentTime = player.seekRange().end - 1; }
-        function seekVideo(e) { const r = e.currentTarget.getBoundingClientRect(), p = (e.clientX - r.left) / r.width; player.isLive() ? video.currentTime = player.seekRange().start + ((player.seekRange().end - player.seekRange().start) * p) : video.currentTime = p * video.duration; }
+        function skip(v) { 
+            printDebug('User Action', v > 0 ? 'Skipped Forward 10s' : 'Skipped Backward 10s');
+            video.currentTime += v; showControls(); 
+        }
+        function goLive() { 
+            if(player.isLive()) {
+                video.currentTime = player.seekRange().end - 1; 
+                printDebug('User Action', 'Jumped to Live Edge');
+            }
+        }
+        function seekVideo(e) { 
+            const r = e.currentTarget.getBoundingClientRect(), p = (e.clientX - r.left) / r.width; 
+            player.isLive() ? video.currentTime = player.seekRange().start + ((player.seekRange().end - player.seekRange().start) * p) : video.currentTime = p * video.duration; 
+            printDebug('User Action', 'Seekbar clicked');
+        }
         
-        function togglePlay() { video.paused ? (video.play(), updIcon('pause')) : (video.pause(), updIcon('play_arrow')); showControls(); }
+        function togglePlay() { 
+            video.paused ? (video.play(), updIcon('pause'), printDebug('User Action', 'Video Played')) : (video.pause(), updIcon('play_arrow'), printDebug('User Action', 'Video Paused')); 
+            showControls(); 
+        }
         function updIcon(i) { document.getElementById('play-icon').innerText = i; document.getElementById('center-play-icon').innerText = i; }
-        function toggleMute() { video.muted = !video.muted; document.getElementById('vol-icon').innerText = video.muted ? 'volume_off' : 'volume_up'; }
-        function toggleFull() { !document.fullscreenElement ? document.getElementById('video-container').requestFullscreen() : document.exitFullscreen(); }
-        function togglePiP() { document.pictureInPictureElement ? document.exitPictureInPicture() : video.requestPictureInPicture(); }
+        function toggleMute() { 
+            video.muted = !video.muted; 
+            document.getElementById('vol-icon').innerText = video.muted ? 'volume_off' : 'volume_up'; 
+            printDebug('User Action', video.muted ? 'Video Muted' : 'Video Unmuted');
+        }
+        function toggleFull() { 
+            !document.fullscreenElement ? (document.getElementById('video-container').requestFullscreen(), printDebug('User Action', 'Entered Fullscreen')) : (document.exitFullscreen(), printDebug('User Action', 'Exited Fullscreen')); 
+        }
+        function togglePiP() { 
+            document.pictureInPictureElement ? (document.exitPictureInPicture(), printDebug('User Action', 'Exited PiP')) : (video.requestPictureInPicture(), printDebug('User Action', 'Entered PiP')); 
+        }
         
         function toggleControls() { document.getElementById('controls').style.opacity === '1' ? hideControls() : showControls(); }
         function showControls() { document.getElementById('controls').style.opacity = '1'; document.getElementById('center-controls').style.opacity = '1'; document.getElementById('video-container').style.cursor = 'default'; clearTimeout(hideTimeout); if(!video.paused) hideTimeout = setTimeout(hideControls, 3000); }
