@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>S-PTV Direct with Debugger</title>
+    <title>S-PTV Direct with Debugger & Pro Config</title>
     <!-- Shaka Player Version 4.7.11 (Stable) -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/shaka-player/4.7.11/shaka-player.ui.min.js"></script>
     <link href="https://fonts.googleapis.com/icon?family=Material+Icons" rel="stylesheet">
     
     <style>
-        /* Body একটু মডিফাই করা হয়েছে প্লেয়ার উপরে তোলার জন্য এবং নিচে ডিবাগ বক্স রাখার জন্য */
+        /* বডি ডিজাইন: প্লেয়ার উপরে এবং ডিবাগ বক্স নিচে রাখার জন্য */
         body { 
             background: #000; color: #fff; font-family: 'Segoe UI', sans-serif; 
             margin: 0; padding: 20px 10px; width: 100vw; height: 100vh; 
@@ -75,7 +75,7 @@
         
         #error-msg { position: absolute; top: 40%; width: 100%; text-align: center; color: #ff4444; font-size: 16px; display: none; z-index: 5; text-shadow: 0 0 5px black; }
 
-        /* ================= ADDED: DEBUGGING BOX CSS ================= */
+        /* ডিবাগিং বক্স CSS */
         .debug-box {
             width: 100%; max-width: 1000px; height: 300px; 
             background: #0d0d0d; border: 1px solid #333; border-radius: 8px; 
@@ -89,6 +89,7 @@
 </head>
 <body>
     <div class="video-container" id="video-container" onclick="toggleControls()">
+        <!-- ভিডিও ট্যাগ -->
         <video id="video" autoplay playsinline></video>
         <div id="error-msg">Loading...</div>
         <div class="spinner" id="buffering-spinner"></div>
@@ -121,7 +122,7 @@
         </div>
     </div>
 
-    <!-- ================= ADDED: DEBUGGING BOX HTML ================= -->
+    <!-- ডিবাগিং বক্স HTML -->
     <div class="debug-box" id="debug-box">
         <div class="debug-title">⚙️ SYSTEM DEBUGGING CONSOLE</div>
         <pre id="debug-log">Initialize System...\n</pre>
@@ -138,7 +139,7 @@
         const errorMsg = document.getElementById('error-msg');
         let hideTimeout;
 
-        // ================= ADDED: DEBUGGING FUNCTION =================
+        // ডিবাগিং ফাংশন
         function printDebug(title, data) {
             const logElement = document.getElementById('debug-log');
             const debugBox = document.getElementById('debug-box');
@@ -151,9 +152,8 @@
                 content += data;
             }
             logElement.innerHTML += content + '\n';
-            debugBox.scrollTop = debugBox.scrollHeight; // Auto-scroll to bottom
+            debugBox.scrollTop = debugBox.scrollHeight; 
         }
-        // ==============================================================
 
         async function init() {
             printDebug('Init', 'Shaka Player Polyfills installing...');
@@ -165,7 +165,7 @@
                 
                 player.addEventListener('error', (e) => {
                     console.error(e);
-                    printDebug('PLAYER ERROR', e.detail);
+                    printDebug('PLAYER ERROR', e.detail || e);
                 });
                 
                 player.addEventListener('buffering', (e) => {
@@ -218,31 +218,31 @@
             errorMsg.style.display = 'none';
             printDebug('Loading Video', url);
             
+            // ==========================================================
+            // UPDATED CONFIGURATION (Matches CineArena to fix CORS/Load errors)
+            // ==========================================================
             const config = {
                 streaming: { 
-                    bufferingGoal: 5,           
+                    bufferingGoal: 15,           // 15s Buffer (CineArena standard)
                     rebufferingGoal: 2,         
-                    bufferBehind: 10,
+                    bufferBehind: 15,
                     lowLatencyMode: true,
                     retryParameters: {
                         timeout: 10000,
                         maxAttempts: 5,
-                        baseDelay: 1000,
-                        backoffFactor: 2
+                        baseDelay: 300,
+                        backoffFactor: 1.2
                     },
+                    segmentRequestTimeout: 8000,
+                    segmentPrefetchLimit: 2,
                     jumpLargeGaps: true,
-                    inaccurateManifestTolerance: 0,
-                    stallEnabled: true,         
+                    stallEnabled: true,
                     ignoreTextStreamFailures: true 
                 },
                 manifest: {
-                    dash: {
-                        ignoreSuggestedPresentationDelay: true, 
-                        clockSyncUri: ''
-                    },
-                    hls: {
-                        ignoreManifestProgramDateTime: true
-                    }
+                    retryParameters: { timeout: 8000, maxAttempts: 3 },
+                    hls: { ignoreManifestProgramDateTime: true }
+                    // dash: { clockSyncUri: '' } REMOVED to prevent Amazon blocking
                 },
                 abr: { 
                     enabled: true, 
@@ -254,30 +254,29 @@
             
             player.configure(config);
             
-            // PRINTING FULL ACTUAL APPLIED CONFIGURATION LINE BY LINE
+            // PRINTING FULL ACTUAL APPLIED CONFIGURATION
             printDebug('FULL SHAKA CONFIGURATION APPLIED', player.getConfiguration());
 
             try {
                 await player.load(url);
                 printDebug('Success', 'Video loaded successfully into player!');
                 
+                // Aggressive Autoplay with CineArena logic
+                video.muted = true; // Muting by default to ensure autoplay success
                 var playPromise = video.play();
                 if (playPromise !== undefined) {
                     playPromise.then(_ => {
-                        printDebug('Playback', 'Autoplay started with sound.');
-                    }).catch(error => {
-                        video.muted = true;
-                        video.play();
+                        printDebug('Playback', 'Autoplay started (Muted).');
                         updIcon('pause');
-                        printDebug('Playback', 'Autoplay blocked. Muted and started play.');
+                        document.getElementById('vol-icon').innerText = 'volume_off';
+                    }).catch(error => {
+                        printDebug('Playback Error', 'Autoplay completely blocked by browser.');
                     });
                 }
 
                 if (player.isLive()) {
                     video.currentTime = player.seekRange().end - 1;
                     printDebug('Live Stream', 'Detected LIVE stream. Synced to edge.');
-                } else {
-                    printDebug('VOD Stream', 'Detected VOD (Video on Demand).');
                 }
                 
                 startTimer();
@@ -286,7 +285,7 @@
             } catch (e) { 
                 console.error(e);
                 showError("Stream Offline"); 
-                printDebug('Load Error', 'Failed to load stream (Offline or CORS).');
+                printDebug('Load Error', 'Failed to load stream (Offline or CORS). ' + (e.message || ''));
             }
         }
 
@@ -320,15 +319,11 @@
             const langName = new Intl.DisplayNames(['en'], { type: 'language' });
 
             const audioLangs = player.getAudioLanguages();
-            printDebug('Audio Languages Extracted', audioLangs);
+            if(audioLangs.length > 0) printDebug('Audio Languages Extracted', audioLangs);
 
             audioLangs.forEach(l => {
                 let label;
-                try {
-                    label = langName.of(l);
-                } catch(e) {
-                    label = l.toUpperCase();
-                }
+                try { label = langName.of(l); } catch(e) { label = l.toUpperCase(); }
                 a.innerHTML += `<div class="popup-item" onclick="setA('${l}')">${label}</div>`;
             });
         }
